@@ -1,0 +1,7 @@
+Name file	n. of events	% anomalies	analysis from	% anomalies flow Rate	% anomalies Signal	% anomalies Margins
+Blood_QC	338343	9.63	Flow Rate, Flow Signal and Flow Margin	1.92	0	7.87
+Bone Marrow_QC	291235	9	Flow Rate, Flow Signal and Flow Margin	1.68	0	7.44
+Inguinal Lymph Node_QC	296967	6.55	Flow Rate, Flow Signal and Flow Margin	0.93	0	5.67
+Peyer Patch_QC	180915	6.3	Flow Rate, Flow Signal and Flow Margin	0.47	0	5.86
+Spleen_QC	316535	8.06	Flow Rate, Flow Signal and Flow Margin	1.84	0	6.32
+Thymus_QC	457345	4.57	Flow Rate, Flow Signal and Flow Margin	1.12	0	3.5

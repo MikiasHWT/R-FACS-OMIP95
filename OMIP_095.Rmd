@@ -1,0 +1,221 @@
+---
+title: "OMIP-095"
+author: "Mikias HW"
+date: "2024-04-13"
+output: html_document
+---
+
+Load Library
+```{r results='hide', message=FALSE, warning=FALSE}
+library(tidyverse)
+library(Spectre)
+library(tidymodels)
+tidymodels_prefer()
+library(recipes)
+library(flowCore)
+library(FlowSOM)
+library(janitor)
+library(flowVS)
+library(xlsx)
+library(flowViz)
+library(corrplot)
+library(embed)
+library(tidytext)
+
+```
+
+
+```{r}
+fcs.dir <- file.path("FCS/")
+
+
+fs <- read.flowSet(
+  path = fcs.dir,
+  pattern = "*.fcs",
+  transformation = FALSE,
+  truncate_max_range = FALSE
+)
+
+
+# fs1 <- fs[[1]]
+#
+# markers1 <- fs1@parameters@data[["desc"]]
+# dyes1 <- fs1@parameters@data[["name"]]
+
+
+# Prep empty df
+metadata <- data.frame()
+
+# Iterate through flowset to extract meta data
+for (i in 1:length(fs)) {
+  flow_frame <- fs[[i]]
+  file_name <- flow_frame@description[["$FIL"]] # File Name
+  tube_name <- flow_frame@description[["TUBENAME"]] # Tube Name
+  cell_count <- flow_frame@description[["$TOT"]] # Number of detected events
+  date_batch <- flow_frame@description[["$DATE"]] # Collection date
+
+  row_data <- data.frame(file_name, tube_name, cell_count, date_batch)
+  metadata <- bind_rows(metadata, row_data)
+
+  rm(flow_frame, row_data)
+}
+```
+
+```{r}
+fcs_colname <- colnames(fs)
+
+antigen <- pData(parameters(fs[[1]]))$desc
+
+# flowViz::densityplot(~`.`, fs[[1]])
+```
+
+
+```{r}
+exps_parameters <- fs[[1]]@parameters@data
+
+exps_parameters <- exps_parameters |>
+  select(name, desc)
+
+exps_data <- data.frame()
+
+# Iterate through flowset to extract expression data & retain source information
+for (i in 1:length(fs)) {
+  flow_frame <- fs[[i]]
+  exps_df <- flow_frame@exprs
+  tube_name <- flow_frame@description[["TUBENAME"]]
+
+  row_data <- data.frame(exps_df, tube_name)
+  exps_data <- bind_rows(exps_data, row_data)
+
+  rm(flow_frame, row_data, exps_df)
+}
+
+
+# colnames(exps_data) <- exps_parameters$marker
+
+exps_data <- clean_names(exps_data) |>
+  select(-live_dead_blue_h)
+
+# colnames(exps_data)
+
+exps_data_sub <- do.subsample(exps_data, 60000)
+
+exps_data_sub |>
+  count(tube_name)
+
+
+exps_submatrix <- as.matrix(exps_data_sub)
+```
+
+```{r}
+# Split data into training/testing/validation sets
+set.seed(1601)
+fs_split <- initial_validation_split(exps_data, strata = tube_name, prop = c(0.025, 0.025))
+fs_split
+
+# Return data frames:
+fs_train <- training(fs_split)
+fs_test <- testing(fs_split)
+fs_validation <- validation(fs_split)
+
+# Check distribution of samples in train set
+fs_train |>
+  count(tube_name)
+
+set.seed(1602)
+
+# Return an 'rset' object to use with the tune functions:
+fs_val <- validation_set(fs_split)
+fs_split$splits[[1]]
+
+# Corrolation plot between all detectors
+fs_train |>
+  select(-tube_name) |>
+  cor() |>
+  corrplot(order = "hclust", type = "upper", diag = FALSE)
+
+to_transform <- fs_train |>
+  select(-tube_name) |>
+  names()
+
+fs_train_exps <- fs_train |>
+  select(-tube_name)
+
+
+
+# Arcsinh transformation
+
+asinhTrans <- arcsinhTransform(transformationId = "ln-transformation", a = 1, b = 500, c = 1)
+
+translist <- transformList(to_transform, asinhTrans)
+
+tr_fs_train <- transform(fs_train, translist)
+```
+
+
+```{r}
+# Use the training data from the bean_val split object
+fs_pca_rec <- recipe(~., data = tr_fs_train) |>
+  update_role(tube_name, new_role = "Tissue") |>
+  step_normalize(all_predictors()) |>
+  step_pca(all_predictors(), num_comp = 35)
+
+fs_prep <- prep(fs_pca_rec)
+
+fs_prep
+
+tidied_pca <- tidy(fs_prep, 2)
+
+
+tidied_pca %>%
+  filter(component %in% paste0("PC", 1:5)) %>%
+  mutate(component = fct_inorder(component)) %>%
+  ggplot(aes(value, terms, fill = terms)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~component, nrow = 1) +
+  labs(y = NULL)
+
+
+#########
+
+tidied_pca %>%
+  filter(component %in% paste0("PC", 1:4)) %>%
+  group_by(component) %>%
+  top_n(8, abs(value)) %>%
+  ungroup() %>%
+  mutate(terms = reorder_within(terms, abs(value), component)) %>%
+  ggplot(aes(abs(value), terms, fill = value > 0)) +
+  geom_col() +
+  facet_wrap(~component, scales = "free_y") +
+  scale_y_reordered() +
+  labs(
+    x = "Absolute value of contribution",
+    y = NULL, fill = "Positive?"
+  )
+
+
+juice(fs_prep) |>
+  ggplot(aes(PC01, PC02, label = tube_name)) +
+  geom_point(aes(color = tube_name), alpha = 0.7, size = 2) +
+  geom_text(check_overlap = TRUE, hjust = "inward", family = "IBMPlexSans") +
+  labs(color = NULL)
+
+
+###########
+
+umap_rec <- recipe(~., data = tr_fs_train) %>%
+  update_role(tube_name, new_role = "Tissue") %>%
+  step_normalize(all_predictors()) %>%
+  step_umap(all_predictors())
+
+umap_prep <- prep(umap_rec)
+
+umap_prep
+
+
+juice(umap_prep) %>%
+  ggplot(aes(UMAP1, UMAP2, label = tube_name)) +
+  geom_point(aes(color = tube_name), alpha = 0.7, size = 2) +
+  geom_text(check_overlap = TRUE, hjust = "inward", family = "IBMPlexSans") +
+  labs(color = NULL)
+```

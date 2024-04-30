@@ -1,0 +1,470 @@
+---
+title: "PostQC_OMIP095"
+author: "Mikias HW"
+date: "`r Sys.Date()`"
+output: html_document
+---
+# Prep Workspace
+## Load Libraries
+```{r results='hide', message=FALSE, warning=FALSE}
+library(Spectre)
+library(tidymodels)
+tidymodels_prefer()
+library(recipes)
+library(flowCore)
+library(FlowSOM)
+library(janitor)
+library(flowVS)
+library(xlsx)
+library(flowViz)
+library(corrplot)
+library(embed)
+library(tidytext)
+library(flowWorkspace)
+library(CytoML)
+library(ggcyto)
+library(tidyverse)
+library(flowAI)
+library(bestNormalize)
+library(patchwork)
+library(ggforce)
+library(SingleCellExperiment)
+```
+
+## Preferred functions
+```{r results='hide', message=FALSE, warning=FALSE}
+library(conflicted)
+# Set function preferences (if needed)
+conflicts_prefer(dplyr::select)
+
+conflicts_prefer(dplyr::filter)
+```
+
+## Directories
+```{r}
+# Save working directory (if needed)
+wDir <- getwd()
+
+# Set working directory (if needed)
+setwd(wDir)
+
+# Set QC directory
+qcDir <- paste(wDir, "FlowJo_QC/QC_Gating", sep = "/")
+
+qcFCS <- paste(qcDir, "QC_FCS", sep = "/")
+
+qcGates <- paste(wDir, "FlowJo_QC/FlowJo_Web_files", sep = "/")
+
+# Save QC png list
+qcPNG <- list.files(qcGates, pattern = "*.png", full=TRUE)
+
+# flowAI results
+resAI <- paste(wDir, "resultsQC", sep = "/")
+
+```
+
+# Project Background
+## OMIP-095
+
+    OMIP-095: 
+    40-Color spectral flow cytometry delineates all major leukocyte populations in murine lymphoid tissues 
+
+    Aris J. Kare, Lisa Nichols, Ricardo Zermeno, Marina N. Raie, Spencer K. Tumbale, Katherine W. Ferrara 
+
+    First published: 28 September 2023 
+
+    https://doi.org/10.1002/cyto.a.24788 
+    
+    Flow Repository ID: 	FR-FCM-Z63E
+    
+## Quality Control
+```{r, results='asis'}
+# Define markdown PNG display function
+generate_PNGs <- function(png_paths) {
+  image_html <- lapply(png_paths, function(path) {
+    paste0("<img src=\"", path, "\" alt=\"Image\"/>\n")
+  })
+  return(unlist(image_html))
+}
+
+png_paths <- qcPNG
+
+image_html <- generate_PNGs(png_paths)
+
+cat(image_html, sep = "\n")
+
+```
+
+## Quality Control II
+```{r eval=FALSE}
+# # Select Flowjo Workspace file
+# fjWSP <- list.files(qcDir, pattern="QC_Gated.wsp",full=TRUE)
+# 
+# # Select QC's FCS files
+# FCSfiles <- list.files(qcFCS, pattern="*.fcs",full=TRUE)
+# 
+# # Create Flowjo Workspace object
+# ws <- open_flowjo_xml(fjWSP)
+# 
+# # View sample information
+# fj_ws_get_samples(ws, group_id = 1)
+# 
+# # Construct Gating Set object
+# gs <- flowjo_to_gatingset(ws, group_id = 1)
+# 
+# # Exctact FCS parameters
+# keys <- fj_ws_get_keywords(ws, 1)
+# 
+# # QC Steps 
+# plot(gs)
+# 
+# gs_get_pop_paths(gs, path = "full")
+# 
+# gatelist <- gs_get_pop_paths(gs, path = "auto")
+# 
+# gate1 <- gatelist[1]
+# gate2 <- gatelist[2]
+# gate3 <- gatelist[3]
+# gate4 <- gatelist[4]
+# gate5 <- gatelist[5]
+# 
+# autoplot(gs, gate2, bins = 100)
+# 
+# gh <- gs[[5]]
+# 
+# autoplot(gh)
+# 
+# # Gating states
+# gs_pop_get_stats(gs, xml = TRUE)
+# 
+# # Detectors
+# gs_pop_get_data(gs)
+# 
+# # File names
+# sampleNames(gs)
+
+```
+
+## Load FCS files
+```{r}
+# Create flowSet object
+fs <- read.flowSet(
+  path = qcFCS,
+  pattern = "*.fcs",
+  transformation = FALSE,
+  truncate_max_range = FALSE
+)
+
+# rm(fs)
+fs[[1]]
+
+# get more info
+pData(fs)
+```
+
+## flowAI final QC
+```{r}
+# # Create flowSet object
+# fsPre <- read.flowSet(
+#   path = qcFCS,
+#   pattern = "*.fcs",
+#   transformation = FALSE,
+#   truncate_max_range = FALSE
+# )
+# 
+# # rm(fs)
+# fsPre[[1]]
+# 
+# # Can some time
+# # Saves folder of QC results and QC'd FCS files in working directory
+# 
+# fs <- flow_auto_qc(fsPre, sideFM = "lower")
+
+# Show QC results
+QCfile <- paste(resAI, "QCmini.txt", sep = "/")
+
+resAIqc <- read.csv(QCfile, sep = "\t", check.names = FALSE)
+
+resAIqc
+
+```
+
+
+## Samples metadata
+```{r}
+# Prep empty df
+metadata <- data.frame()
+
+# Iterate through flowset to extract metadata
+for (i in 1:length(fs)) {
+  flow_frame <- fs[[i]]
+  tube_name <- flow_frame@description[["TUBENAME"]] # Tube Name
+  cell_count <- flow_frame@description[["$TOT"]] # Event Counts
+  sample_group <- flow_frame@description[["GROUPNAME"]] # Sample Group
+  fcs_version <- flow_frame@description[["FCSversion"]] # FCS File Version
+  collection <- flow_frame@description[["$DATE"]] # Collection Date
+  cytometer <- flow_frame@description[["$CYT"]] # Cytometer
+  software <- flow_frame@description[["CREATOR"]] # Cytometer Software
+  institute <- flow_frame@description[["$INST"]] # Institution
+  operator <- flow_frame@description[["$OP"]] # Operator
+
+
+  row_data <- data.frame(tube_name, cell_count, sample_group, 
+                         fcs_version, collection, cytometer, 
+                         software, institute, operator)
+  metadata <- bind_rows(metadata, row_data)
+
+  rm(flow_frame, row_data)
+}
+
+metadata
+
+```
+
+## Markers & Detectors lists
+```{r}
+# List detectors
+pmts <- fs[[1]]@parameters@data[["name"]] 
+
+# List markers
+markers <- fs[[1]]@parameters@data[["desc"]] 
+
+# Remove Time components
+markers <- na.omit(markers)
+
+pmts <- pmts[pmts != "Time"]
+
+# Combine into dataframe
+detList <- data.frame(markers, pmts) # Merge
+
+detList
+```
+
+## Expression Data
+```{r}
+#fs[[1]]@exprs
+
+exprsDat <- data.frame()
+
+for (i in 1:length(fs)) {
+  flow_frame <- fs[[i]]
+  tube_name <- flow_frame@description[["TUBENAME"]] # Tube Name
+  cell_exprs <- flow_frame@exprs # Expression Data
+
+  row_data <- data.frame(tube_name, cell_exprs)
+  exprsDat <- bind_rows(exprsDat, row_data)
+
+  rm(flow_frame, row_data, cell_exprs, tube_name)
+}
+
+head(exprsDat)
+```
+
+## Subsample
+```{r}
+
+```
+
+## Transformation
+```{r}
+# Apply Transformation paramets
+BiExTrans <- biexponentialTransform("defaultBiexponentialTransform")
+
+# Apply transformation to selected detectors
+fsBiExTrans <- transform(fs, transformList(pmts, BiExTrans))
+
+# ##############
+ArcSinTrans <- arcsinhTransform("defaultArcsinhTransform", a=1, b=5)
+
+# ##############
+fsTransArc <- transform(fs, transformList(pmts, ArcSinTrans))
+
+# Visualize CD25 before transformation
+ggcyto(fs, aes(x = "CD25")) + 
+  geom_freqpoly() + 
+  labs(title = "Raw CD25")
+
+ggcyto(fs, aes(x = "I-A_I-E")) + 
+  geom_freqpoly() + 
+  labs(title = "Raw I-A_I-E")
+
+# Visualize CD25 after transformation.
+ggcyto(fsBiExTrans, aes(x = "CD25")) + 
+  geom_freqpoly() + 
+  labs(title = "BioExponentially Transformed CD25")
+
+ggcyto(fsBiExTrans, aes(x = "I-A_I-E")) + 
+  geom_freqpoly() + 
+  labs(title = "BioExponentially Transformed I-A/I-E")
+
+
+```
+
+## Visualize transformations
+```{r}
+# flowViz lattice
+flowViz::densityplot(~`.`, fs[[1]]) 
+
+flowViz::densityplot(~`.`, fsBiExTrans[[1]]) 
+
+flowViz::densityplot(~`.`, fsTransArc[[1]])
+```
+
+
+## Extract transformed expression data
+```{r}
+
+exprsDatTrans <- data.frame()
+
+for (i in 1:length(fsBiExTrans)) {
+  flow_frame <- fsBiExTrans[[i]]
+  tube_name <- flow_frame@description[["TUBENAME"]] # Tube Name
+  cell_exprs <- flow_frame@exprs # Expression Data
+
+  row_data <- data.frame(tube_name, cell_exprs)
+  exprsDatTrans <- bind_rows(exprsDatTrans, row_data)
+
+  rm(flow_frame, row_data, cell_exprs, tube_name)
+}
+
+head(exprsDatTrans)
+```
+
+## Modeling Clasifier
+```{r}
+
+# Split data into training/testing/validation sets
+set.seed(1601)
+fs_split <- initial_validation_split(exprsDatTrans, strata = tube_name, prop = c(0.025, 0.025))
+
+fs_split
+
+# Return data frames:
+fs_train <- training(fs_split)
+fs_test <- testing(fs_split)
+fs_validation <- validation(fs_split)
+
+# Check distribution of samples in train set
+fs_train |>
+  dplyr::count(tube_name)
+
+
+set.seed(1602)
+
+# Return an 'rset' object to use with the tune functions:
+fs_val <- validation_set(fs_split)
+fs_split$splits[[1]]
+
+# Corrolation plot between all detectors
+fs_train |>
+  select(-tube_name) |>
+  cor() |>
+  corrplot(order = "hclust", type = "upper", diag = FALSE)
+
+```
+
+
+## Single Cell Experiment
+```{r}
+# Construct Single Cell Experiment Object
+sce <- SingleCellExperiment(fs_train)
+
+sce
+
+# dim(assay(sce))
+# colnames(colData(sce))
+# colnames(rowData(sce))
+
+```
+
+
+## Tidy PCA
+```{r}
+
+# fs_rec <- recipe(tube_name ~ ., data = fs_train) |> 
+#   step_zv(all_numeric_predictors()) |> 
+#   step_orderNorm(all_numeric_predictors()) |>  
+#   step_normalize(all_numeric_predictors())
+# 
+# fs_rec
+# 
+# fs_rec_trained <- prep(fs_rec)
+# 
+# fs_rec_trained
+# 
+# fs_rec_bakes <- bake(fs_rec_trained, fs_test)
+# 
+# 
+# fs_rec_trained |> 
+#   step_pca(all_numeric_predictors(), num_comp = 4) |> 
+#   ggplot(aes(x = .panel_x, y = .panel_y)) +
+#     geom_point(alpha = 0.4, size = 0.5)
+# 
+# 
+# plot_validation_results <- function(recipe, dat = fs_validation) {
+#   recipe %>%
+#     # Estimate any additional steps
+#     prep() %>%
+#     # Process the data (the validation set by default)
+#     bake(new_data = dat) %>%
+#     # Create the scatterplot matrix
+#     ggplot(aes(x = .panel_x, y = .panel_y, color = tube_name, fill = tube_name)) +
+#     geom_point(alpha = 0.4, size = 0.5) +
+#     geom_autodensity(alpha = .3) +
+#     facet_matrix(vars(-tube_name), layer.diag = 2) + 
+#     scale_color_brewer(palette = "Dark2") + 
+#     scale_fill_brewer(palette = "Dark2")
+# }
+# 
+# 
+# 
+# fs_rec_trained %>%
+#   step_pca(all_numeric_predictors(), num_comp = 4) %>%
+#   plot_validation_results() + 
+#   ggtitle("Principal Component Analysis")
+
+```
+
+## flowSOM
+```{r}
+
+# # Run FlowSOM clustering
+# resSOM <- FlowSOM(fsBiExTrans)
+# 
+# # Plot results
+# PlotStars(resSOM,
+#           backgroundValues = resSOM$metaclustering)
+# 
+# # Get metaclustering per cell
+# flowSOM.clustering <- GetMetaclusters(resSOM)
+# 
+
+
+```
+
+
+## Dimensionality reduction
+```{r}
+# 
+# # Dimensionality reduction
+# 
+# cell.sub <- do.subsample(cell.dat, sub.targets, tissue.col)
+# cell.sub
+# 
+# cell.sub <- run.umap(cell.sub, cluster.cols)
+# cell.sub
+# 
+# # DR plots
+# 
+# make.colour.plot(cell.sub, "UMAP_X", "UMAP_Y", "FlowSOM_metacluster", col.type = 'factor', add.label = TRUE)
+# make.multi.plot(cell.sub, "UMAP_X", "UMAP_Y", cellular.cols)
+# make.multi.plot(cell.sub, "UMAP_X", "UMAP_Y", "FlowSOM_metacluster", tissue.col, col.type = 'factor')
+# 
+# # Expression heatmap
+# 
+# exp <- do.aggregate(cell.dat, cellular.cols, by = "FlowSOM_metacluster")
+# make.pheatmap(exp, "FlowSOM_metacluster", cellular.cols)
+
+```
+
+

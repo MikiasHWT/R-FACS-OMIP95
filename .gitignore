@@ -2,3 +2,10 @@
 .Rhistory
 .RData
 .Ruserdata
+*.html
+*.fcs
+*.wsp
+*.acs
+*.xml
+*.js
+*.pdf
