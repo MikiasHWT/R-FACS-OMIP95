@@ -154,7 +154,8 @@ tr_fs_train <- transform(fs_train, translist)
 
 
 ```{r}
-# Use the training data from the bean_val split object
+# Tidymodels approach towards producing a classification model using dimensionality reduction. 
+
 fs_pca_rec <- recipe(~., data = tr_fs_train) |>
   update_role(tube_name, new_role = "Tissue") |>
   step_normalize(all_predictors()) |>
